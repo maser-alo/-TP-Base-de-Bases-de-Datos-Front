@@ -1,0 +1,600 @@
+```php
+<?php
+// ==========================================================
+// TP - MODELADO DE DATOS — Dashboard PHP Modernizado
+// ==========================================================
+
+$DB_HOST = 'localhost';
+$DB_USER = 'root';
+$DB_PASS = '';
+$DB_NAME = 'estaciones_mt';
+
+$conn = new mysqli($DB_HOST, $DB_USER, $DB_PASS, $DB_NAME);
+$conn->set_charset('utf8mb4');
+
+if ($conn->connect_error) {
+    die("Error de conexión");
+}
+
+// ── FILTROS ───────────────────────────────────────────────
+$filtro_estacion = intval($_GET['estacion'] ?? 0);
+$filtro_unidad   = intval($_GET['unidad'] ?? 0);
+$filtro_fecha    = $_GET['fecha'] ?? '';
+
+// ── QUERY PRINCIPAL ───────────────────────────────────────
+$where = [];
+$params = [];
+$types = '';
+
+if ($filtro_estacion) {
+    $where[] = 'e.id = ?';
+    $params[] = $filtro_estacion;
+    $types .= 'i';
+}
+
+if ($filtro_unidad) {
+    $where[] = 'u.id = ?';
+    $params[] = $filtro_unidad;
+    $types .= 'i';
+}
+
+if ($filtro_fecha) {
+    $where[] = 'DATE(m.fecha_hora) = ?';
+    $params[] = $filtro_fecha;
+    $types .= 's';
+}
+
+$sql = "
+SELECT
+    e.nombre AS estacion,
+    l.nombre AS localidad,
+    s.nombre AS sensor,
+    u.nombre AS unidad,
+    m.valor,
+    m.fecha_hora
+FROM medicion m
+JOIN estacion_sensor es ON es.id = m.estacion_sensor_id
+JOIN estacion e ON e.id = es.estacion_id
+JOIN localidad l ON l.id = e.localidad_id
+JOIN sensor s ON s.id = es.sensor_id
+JOIN unidad u ON u.id = s.unidad_id
+";
+
+if ($where) {
+    $sql .= ' WHERE ' . implode(' AND ', $where);
+}
+
+$sql .= ' ORDER BY m.fecha_hora DESC LIMIT 200';
+
+$stmt = $conn->prepare($sql);
+
+if ($params) {
+    $stmt->bind_param($types, ...$params);
+}
+
+$stmt->execute();
+
+$mediciones = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+
+// ── DATOS FILTROS ─────────────────────────────────────────
+$estaciones = $conn->query("
+    SELECT id, nombre
+    FROM estacion
+    ORDER BY nombre
+")->fetch_all(MYSQLI_ASSOC);
+
+$unidades = $conn->query("
+    SELECT id, nombre
+    FROM unidad
+    ORDER BY nombre
+")->fetch_all(MYSQLI_ASSOC);
+
+// ── KPIs ──────────────────────────────────────────────────
+$total_mediciones = $conn->query("
+    SELECT COUNT(*) c
+    FROM medicion
+")->fetch_assoc()['c'];
+
+$total_estaciones = $conn->query("
+    SELECT COUNT(*) c
+    FROM estacion
+")->fetch_assoc()['c'];
+
+$total_sensores = $conn->query("
+    SELECT COUNT(*) c
+    FROM sensor
+")->fetch_assoc()['c'];
+
+$ultima_medicion = $conn->query("
+    SELECT MAX(fecha_hora) f
+    FROM medicion
+")->fetch_assoc()['f'];
+
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Dashboard MT</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;800&display=swap" rel="stylesheet">
+
+<style>
+
+:root{
+    --bg:#0f1722;
+    --panel:#162231;
+    --border:#24364d;
+    --accent:#4cc9f0;
+    --accent2:#ffd166;
+    --accent3:#72efdd;
+    --text:#e6edf5;
+    --muted:#7f97ad;
+}
+
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+}
+
+body{
+    background:linear-gradient(180deg,#0b1118 0%,#101826 100%);
+    color:var(--text);
+    font-family:'Inter',sans-serif;
+    min-height:100vh;
+}
+
+header{
+    position:sticky;
+    top:0;
+    z-index:100;
+    background:rgba(15,23,34,.9);
+    backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--border);
+    padding:1.2rem 2rem;
+}
+
+header h1{
+    font-size:1.4rem;
+    font-weight:800;
+}
+
+header p{
+    color:var(--muted);
+    font-size:.8rem;
+    margin-top:.2rem;
+}
+
+.container{
+    max-width:1400px;
+    margin:auto;
+    padding:2rem;
+}
+
+.kpi-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+    gap:1rem;
+    margin-bottom:2rem;
+}
+
+.kpi{
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:16px;
+    padding:1.4rem;
+}
+
+.kpi-label{
+    color:var(--muted);
+    font-size:.8rem;
+    text-transform:uppercase;
+}
+
+.kpi-value{
+    display:block;
+    font-size:2rem;
+    font-weight:800;
+    margin-top:.6rem;
+}
+
+.section-title{
+    margin-bottom:1rem;
+    color:var(--accent);
+    font-size:.9rem;
+    text-transform:uppercase;
+    letter-spacing:.08em;
+    font-weight:700;
+}
+
+.toolbar{
+    position:sticky;
+    top:85px;
+    z-index:50;
+
+    display:flex;
+    flex-wrap:wrap;
+    gap:1rem;
+
+    padding:1rem;
+    margin-bottom:1.5rem;
+
+    background:rgba(22,34,49,.85);
+    backdrop-filter:blur(10px);
+
+    border:1px solid var(--border);
+    border-radius:16px;
+}
+
+.field{
+    display:flex;
+    flex-direction:column;
+    gap:.35rem;
+}
+
+.field label{
+    color:var(--muted);
+    font-size:.72rem;
+    text-transform:uppercase;
+}
+
+.field select,
+.field input{
+    background:#0d1722;
+    color:var(--text);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:.7rem .9rem;
+    min-width:180px;
+    outline:none;
+}
+
+.field select:focus,
+.field input:focus{
+    border-color:var(--accent);
+}
+
+.btn{
+    padding:.7rem 1.2rem;
+    border-radius:10px;
+    border:none;
+    cursor:pointer;
+    text-decoration:none;
+    font-weight:700;
+    transition:.2s ease;
+}
+
+.btn:hover{
+    transform:translateY(-2px);
+}
+
+.btn-clear{
+    background:#1d2b3c;
+    color:var(--text);
+}
+
+.table-wrapper{
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:16px;
+    overflow:hidden;
+}
+
+.table-header{
+    padding:1rem 1.2rem;
+    border-bottom:1px solid var(--border);
+    color:var(--muted);
+    font-size:.85rem;
+}
+
+.table-scroll{
+    overflow-x:auto;
+}
+
+table{
+    width:100%;
+    border-collapse:collapse;
+}
+
+thead{
+    background:#101a26;
+}
+
+thead th{
+    text-align:left;
+    padding:1rem;
+    color:var(--muted);
+    font-size:.75rem;
+    text-transform:uppercase;
+}
+
+tbody td{
+    padding:1rem;
+    border-top:1px solid rgba(255,255,255,.04);
+}
+
+tbody tr{
+    transition:.2s ease;
+}
+
+tbody tr:hover{
+    transform:scale(1.003);
+    background:rgba(76,201,240,.06);
+}
+
+.badge{
+    padding:.35rem .7rem;
+    border-radius:999px;
+    font-size:.7rem;
+    font-weight:700;
+}
+
+.badge-tension{
+    background:rgba(76,201,240,.15);
+    color:var(--accent);
+}
+
+.badge-corriente{
+    background:rgba(255,209,102,.15);
+    color:var(--accent2);
+}
+
+.badge-potencia{
+    background:rgba(114,239,221,.15);
+    color:var(--accent3);
+}
+
+.badge-default{
+    background:rgba(255,255,255,.08);
+    color:var(--muted);
+}
+
+.empty{
+    padding:3rem;
+    text-align:center;
+    color:var(--muted);
+}
+
+footer{
+    padding:2rem;
+    text-align:center;
+    color:var(--muted);
+    font-size:.8rem;
+}
+
+</style>
+</head>
+<body>
+
+<header>
+    <h1>⚡ Estaciones de Media Tensión</h1>
+    <p>Dashboard de monitoreo — Alochis Emiliano</p>
+</header>
+
+<div class="container">
+
+    <!-- KPIs -->
+    <div class="kpi-grid">
+
+        <div class="kpi">
+            <span class="kpi-label">Mediciones</span>
+            <span class="kpi-value"><?= number_format($total_mediciones) ?></span>
+        </div>
+
+        <div class="kpi">
+            <span class="kpi-label">Estaciones</span>
+            <span class="kpi-value"><?= $total_estaciones ?></span>
+        </div>
+
+        <div class="kpi">
+            <span class="kpi-label">Sensores</span>
+            <span class="kpi-value"><?= $total_sensores ?></span>
+        </div>
+
+        <div class="kpi">
+            <span class="kpi-label">Última medición</span>
+            <span class="kpi-value" style="font-size:1.1rem">
+                <?= $ultima_medicion ?>
+            </span>
+        </div>
+
+    </div>
+
+    <!-- FILTROS -->
+    <div class="section-title">Filtros</div>
+
+    <form method="GET" id="filtrosForm">
+
+        <div class="toolbar">
+
+            <div class="field">
+                <label>Estación</label>
+
+                <select name="estacion">
+
+                    <option value="0">Todas</option>
+
+                    <?php foreach($estaciones as $e): ?>
+
+                    <option
+                        value="<?= $e['id'] ?>"
+                        <?= $filtro_estacion == $e['id'] ? 'selected' : '' ?>
+                    >
+                        <?= htmlspecialchars($e['nombre']) ?>
+                    </option>
+
+                    <?php endforeach; ?>
+
+                </select>
+            </div>
+
+            <div class="field">
+                <label>Unidad</label>
+
+                <select name="unidad">
+
+                    <option value="0">Todas</option>
+
+                    <?php foreach($unidades as $u): ?>
+
+                    <option
+                        value="<?= $u['id'] ?>"
+                        <?= $filtro_unidad == $u['id'] ? 'selected' : '' ?>
+                    >
+                        <?= htmlspecialchars($u['nombre']) ?>
+                    </option>
+
+                    <?php endforeach; ?>
+
+                </select>
+            </div>
+
+            <div class="field">
+                <label>Fecha</label>
+
+                <input
+                    type="date"
+                    name="fecha"
+                    value="<?= htmlspecialchars($filtro_fecha) ?>"
+                >
+            </div>
+
+            <a href="?" class="btn btn-clear">
+                Limpiar
+            </a>
+
+        </div>
+
+    </form>
+
+    <!-- TABLA -->
+    <div class="section-title">Mediciones</div>
+
+    <div class="table-wrapper">
+
+        <div class="table-header">
+            <?= count($mediciones) ?> registros encontrados
+        </div>
+
+        <div class="table-scroll">
+
+            <?php if(empty($mediciones)): ?>
+
+                <div class="empty">
+                    No hay registros.
+                </div>
+
+            <?php else: ?>
+
+            <table>
+
+                <thead>
+                    <tr>
+                        <th>Estación</th>
+                        <th>Localidad</th>
+                        <th>Sensor</th>
+                        <th>Unidad</th>
+                        <th>Valor</th>
+                        <th>Fecha</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+
+                <?php foreach($mediciones as $m):
+
+                    $badge = 'badge-default';
+
+                    if(str_contains(strtolower($m['unidad']), 'tensión')){
+                        $badge = 'badge-tension';
+                    }
+
+                    elseif(str_contains(strtolower($m['unidad']), 'corriente')){
+                        $badge = 'badge-corriente';
+                    }
+
+                    elseif(str_contains(strtolower($m['unidad']), 'potencia')){
+                        $badge = 'badge-potencia';
+                    }
+
+                ?>
+
+                    <tr>
+
+                        <td><?= htmlspecialchars($m['estacion']) ?></td>
+
+                        <td><?= htmlspecialchars($m['localidad']) ?></td>
+
+                        <td><?= htmlspecialchars($m['sensor']) ?></td>
+
+                        <td>
+                            <span class="badge <?= $badge ?>">
+                                <?= htmlspecialchars($m['unidad']) ?>
+                            </span>
+                        </td>
+
+                        <td><?= number_format($m['valor'],2) ?></td>
+
+                        <td><?= $m['fecha_hora'] ?></td>
+
+                    </tr>
+
+                <?php endforeach; ?>
+
+                </tbody>
+
+            </table>
+
+            <?php endif; ?>
+
+        </div>
+
+    </div>
+
+</div>
+
+<footer>
+    TP Modelado de Datos · PHP + MySQL · Alochis Emiliano
+</footer>
+
+<script>
+
+// ── AUTO FILTRO ───────────────────────────
+document.querySelectorAll(
+    '#filtrosForm select, #filtrosForm input'
+).forEach(el => {
+
+    el.addEventListener('change', () => {
+
+        sessionStorage.setItem(
+            'scrollY',
+            window.scrollY
+        );
+
+        document.getElementById('filtrosForm').submit();
+    });
+
+});
+
+// ── RESTAURAR SCROLL ──────────────────────
+window.addEventListener('load', () => {
+
+    const scrollY = sessionStorage.getItem('scrollY');
+
+    if(scrollY !== null){
+
+        window.scrollTo(0, parseInt(scrollY));
+
+    }
+
+});
+
+</script>
+
+</body>
+</html>
+```
